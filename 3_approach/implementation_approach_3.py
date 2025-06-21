@@ -22,8 +22,9 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.model_selection import train_test_split
 import warnings
-import data_pipeline.data_processing as pp
-
+import sys
+sys.path.append(os.path.abspath(os.path.join('..')))
+from data_pipeline import data_processing
 warnings.filterwarnings('ignore')
 
 # Topic modeling libraries
@@ -787,7 +788,7 @@ def main():
     print("--- Loading and Preparing Data ---")
 
     path = kagglehub.dataset_download("amananandrai/ag-news-classification-dataset")
-    train_df, test_df = pp.read_ag_news_split(path)
+    train_df, test_df = data_processing.read_ag_news_split(path)
     subsample = True
     if subsample:
         print("SUBSAMPLING")
@@ -809,18 +810,18 @@ def main():
     processing_cols = ['Title', 'Description']
 
     # clean text columns - try to remove html stuff
-    train_df["Title"] = train_df["Title"].apply(lambda t: pp.clean_given_text(t) if pd.notnull(t) else t)
-    train_df["Description"] = train_df["Description"].apply(lambda d: pp.clean_given_text(d) if pd.notnull(d) else d)
-    test_df["Title"] = test_df["Title"].apply(lambda t: pp.clean_given_text(t) if pd.notnull(t) else t)
-    test_df["Description"] = test_df["Description"].apply(lambda d: pp.clean_given_text(d) if pd.notnull(d) else d)
+    train_df["Title"] = train_df["Title"].apply(lambda t: data_processing.clean_given_text(t) if pd.notnull(t) else t)
+    train_df["Description"] = train_df["Description"].apply(lambda d: data_processing.clean_given_text(d) if pd.notnull(d) else d)
+    test_df["Title"] = test_df["Title"].apply(lambda t: data_processing.clean_given_text(t) if pd.notnull(t) else t)
+    test_df["Description"] = test_df["Description"].apply(lambda d: data_processing.clean_given_text(d) if pd.notnull(d) else d)
 
     # more removal of unnecessary noise
-    pp.remove_quot_occurences(train_df, processing_cols)
-    pp.remove_quot_occurences(test_df, processing_cols)
-    pp.replace_numeric_entities(train_df, processing_cols)
-    pp.replace_numeric_entities(test_df, processing_cols)
-    pp.remove_character_references(train_df, processing_cols)
-    pp.remove_character_references(test_df, processing_cols)
+    data_processing.remove_quot_occurences(train_df, processing_cols)
+    data_processing.remove_quot_occurences(test_df, processing_cols)
+    data_processing.replace_numeric_entities(train_df, processing_cols)
+    data_processing.replace_numeric_entities(test_df, processing_cols)
+    data_processing.remove_character_references(train_df, processing_cols)
+    data_processing.remove_character_references(test_df, processing_cols)
 
     train_df['Combined'] = train_df['Title'] + ' ' + train_df['Description']
     test_df['Combined'] = test_df['Title'] + ' ' + test_df['Description']
