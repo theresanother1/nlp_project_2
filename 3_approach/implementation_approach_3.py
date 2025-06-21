@@ -239,7 +239,7 @@ class AGNewsTopicModeling:
 
         # Initialize BERTopic with optimal number of topics
         topic_model = BERTopic(
-            nr_topics=n_topics,
+            nr_topics=elbow_k,
             min_topic_size=5,
             embedding_model=embedding_model,
             verbose=True
