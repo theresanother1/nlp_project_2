@@ -82,7 +82,10 @@ def run_evaluation():
         model = AGNewsTopicModeling()
         # Workaround for hardcoded 'labels' column in 3_approach
         train_df_bertopic = train_df.rename(columns={'Class Index': 'labels'})
-        test_df_bertopic = test_df.rename(columns={'Class Index': 'labels'})
+        # Create a small test set for BERTopic since the loaded one is empty
+        from sklearn.model_selection import train_test_split
+        train_df_bertopic, test_df_bertopic = train_test_split(train_df_bertopic, test_size=0.1, random_state=42, stratify=train_df_bertopic['labels'])
+        
         model.load_and_preprocess_data(train_df_bertopic, test_df_bertopic)
         model.run_bertopic(n_topics=4)
         return model

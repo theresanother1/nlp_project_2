@@ -25,7 +25,8 @@ def plot_final_results(df: pd.DataFrame):
         axes[i].tick_params(axis='x', rotation=45)
         
     plt.tight_layout()
-    plt.show()
+    plt.savefig('final_results.png')
+    plt.close()
 
 def plot_topic_words(model_topics: Dict[int, List[str]], model_name: str):
     """Visualize the top words for each topic."""
@@ -47,7 +48,8 @@ def plot_topic_words(model_topics: Dict[int, List[str]], model_name: str):
         axes[i].set_title(f'{model_name} - Topic {topic_id}')
         
     plt.tight_layout()
-    plt.show()
+    plt.savefig(f'{model_name}_topics.png')
+    plt.close()
 
 def plot_confusion_matrix(cm: np.ndarray, model_name: str, class_names: List[str]):
     """A standardized function for plotting confusion matrices."""
@@ -60,4 +62,5 @@ def plot_confusion_matrix(cm: np.ndarray, model_name: str, class_names: List[str
     plt.title(f'Confusion Matrix - {model_name}')
     plt.ylabel('True Label')
     plt.xlabel('Predicted Label')
-    plt.show()
+    plt.savefig(f'{model_name}_confusion_matrix.png')
+    plt.close()

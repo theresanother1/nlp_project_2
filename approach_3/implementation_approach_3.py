@@ -108,9 +108,6 @@ class AGNewsTopicModeling:
 
         # Extract texts and labels
         texts = train_data[text_column].tolist()
-        print("LABELS are:")
-
-        print(set(train_data[label_column].tolist()))
         self.labels = train_data[label_column].tolist()
         processed_texts, _ = self._preprocess_text(texts)
 
@@ -176,7 +173,7 @@ class AGNewsTopicModeling:
 
         plt.tight_layout()
         plt.savefig("elbow_vs_silhouette.png", dpi=300, bbox_inches="tight", pad_inches=0.25, facecolor="white",)
-        plt.show()
+        plt.close()
 
 
         return elbow_k, best_silhouette_k, sse, silhouette_scores
@@ -238,7 +235,7 @@ class AGNewsTopicModeling:
 
         # Initialize BERTopic with optimal number of topics
         topic_model = BERTopic(
-            nr_topics=n_topics,
+            nr_topics=elbow_k,
             min_topic_size=5,
             embedding_model=embedding_model,
             verbose=True
@@ -272,20 +269,22 @@ class AGNewsTopicModeling:
         fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
         # Plot mit echten Labels
-        axes[0].scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], c=self.labels, cmap='tab10', s=10)
+        axes[0].scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], c=pd.factorize(self.labels)[0], cmap='tab10', s=10)
         axes[0].set_title("UMAP Projection (Ground Truth) - Train")
         axes[1].scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], c=topics, cmap='tab10', s=10)
         axes[1].set_title("UMAP Projection (BERTopic Topics) - Train")
-        plt.show()
+        plt.savefig("bertopic_train_clusters.png")
+        plt.close()
 
         fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
         # Plot mit echten Labels
-        axes[0].scatter(reduced_embeddings_embeddings_test[:, 0], reduced_embeddings_embeddings_test[:, 1], c=self.test_labels, cmap='tab10', s=10)
-        axes[0].set_title("UMAP Projection (Ground Truth) - Train")
+        axes[0].scatter(reduced_embeddings_embeddings_test[:, 0], reduced_embeddings_embeddings_test[:, 1], c=pd.factorize(self.test_labels)[0], cmap='tab10', s=10)
+        axes[0].set_title("UMAP Projection (Ground Truth) - Test")
         axes[1].scatter(reduced_embeddings_embeddings_test[:, 0], reduced_embeddings_embeddings_test[:, 1], c=test_topics, cmap='tab10', s=10)
-        axes[1].set_title("UMAP Projection (BERTopic Topics) - Train")
-        plt.show()
+        axes[1].set_title("UMAP Projection (BERTopic Topics) - Test")
+        plt.savefig("bertopic_test_clusters.png")
+        plt.close()
 
 
         # Display topic information
@@ -370,20 +369,11 @@ class AGNewsTopicModeling:
             'test_topics': test_topics
         }
 
-        print(train_topics)
-
-
         # Display topic words
         print("\nTop words per topic:")
-        print("GET NUM TOPICS")
-        print(model.get_num_topics())
         topics = model.get_topics()
 
-
         for i in range(min(model.get_num_topics(), 8)):
-            # print("TOPICS top words are ")
-            print(topics[0][i])
-
             print(f"Topic {i}: {', '.join(topics[0][i][:10])}")
 
         return model, train_topics
@@ -532,10 +522,10 @@ class AGNewsTopicModeling:
                 embeddings = embedding_model.encode(self.processed_texts)
 
                 # Find optimal k
-                elbow_k, silhouette_k, _, _ = self.find_optimal_clusters_elbow(embeddings)
+                #elbow_k, silhouette_k, _, _ = self.find_optimal_clusters_elbow(embeddings)
 
                 topic_model = BERTopic(
-                    nr_topics=elbow_k,
+                    nr_topics=4,
                     embedding_model=embedding_model,
                     verbose=False
                 )
@@ -551,11 +541,12 @@ class AGNewsTopicModeling:
                 fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
                 # Plot mit echten Labels
-                axes[0].scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], c=self.labels, cmap='tab10', s=10)
+                axes[0].scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], c=pd.factorize(self.labels)[0], cmap='tab10', s=10)
                 axes[0].set_title(f"UMAP Projection (Ground Truth) - Train")
                 axes[1].scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], c=topics, cmap='tab10', s=10)
                 axes[1].set_title(f"UMAP Projection (BERTopic Topics - {model_name}) - Train")
-                plt.show()
+                plt.savefig(f"transformer_{model_name}_train_clusters.png")
+                plt.close()
 
                 fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
@@ -566,7 +557,8 @@ class AGNewsTopicModeling:
                 axes[1].scatter(reduced_embeddings_embeddings_test[:, 0], reduced_embeddings_embeddings_test[:, 1],
                                 c=test_topics, cmap='tab10', s=10)
                 axes[1].set_title(f"UMAP Projection (BERTopic Topics {model_name}) - Test")
-                plt.show()
+                plt.savefig(f"transformer_{model_name}_test_clusters.png")
+                plt.close()
 
                 # Quick evaluation
                 test_nmi = normalized_mutual_info_score(self.test_labels, test_topics)
