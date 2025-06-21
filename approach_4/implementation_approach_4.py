@@ -1,6 +1,8 @@
 """
 Main Evaluation Script for Topic Modeling
 """
+import sys, os
+sys.path.append(os.path.abspath(os.path.join('..')))
 import pandas as pd
 from gensim.corpora import Dictionary
 
