@@ -23,9 +23,7 @@ from data_pipeline.visualizations import (
     visualize_word_distribution_for, compare_wordclouds_per_class
 )
 
-# Import local LDA implementation
-from implementation_approach_1 import (
-    LDATopicModeler, LDAComparison, LDAEvaluator, run_complete_lda_pipeline
-)
+# The local LDA implementation is imported directly where needed,
+# not in the __init__.py to avoid circular dependencies.
 
 __version__ = "1.0.0"
