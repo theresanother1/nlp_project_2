@@ -235,7 +235,8 @@ class AGNewsTopicModeling:
         embeddings = embedding_model.encode(self.processed_texts)
 
         # Find optimal k
-        elbow_k, silhouette_k, _, _ = self.find_optimal_clusters_elbow(embeddings)
+        #elbow_k, silhouette_k, _, _ = self.find_optimal_clusters_elbow(embeddings)
+        elbow_k = n_topics
 
         # Initialize BERTopic with optimal number of topics
         topic_model = BERTopic(

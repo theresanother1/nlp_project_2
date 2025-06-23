@@ -2,13 +2,14 @@
 Main Evaluation Script for Topic Modeling
 """
 import sys, os
-sys.path.append(os.path.abspath(os.path.join('..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import pandas as pd
 from gensim.corpora import Dictionary
 
 # Import from other approaches
 from data_pipeline.data_processing import AG_LABELS
 from approach_1.implementation_approach_1 import LDATopicModeler
+from approach_2.implementation_approach_2 import ExperimentRunner
 from approach_3.implementation_approach_3 import AGNewsTopicModeling
 
 # Import from this approach
@@ -76,8 +77,54 @@ def run_evaluation():
             'Memory (MB)': lda_benchmark['memory_usage_mb']
         })
 
-    # --- 3. Evaluate Approach 3: BERTopic ---
-    print("\n--- 3. Evaluating Approach 3: BERTopic ---")
+    # --- 3. Evaluate Approach 2: NMF, LSA, PCA ---
+    print("\n--- 3. Evaluating Approach 2: NMF, LSA, PCA ---")
+    runner = ExperimentRunner(train_df, test_df)
+    nmf_results = runner.run_nmf_experiments()
+    lsa_results = runner.run_lsa_experiments()
+    bow_tfidf_results = runner.run_bow_tfidf_experiments()
+    runner.run_pca_experiment()
+
+    results.append({
+        'Model': 'NMF',
+        'Coherence': None,
+        'Diversity': None,
+        'ARI': nmf_results['Accuracy'].max(),
+        'NMI': None,
+        'Homogeneity': None,
+        'Completeness': None,
+        'V-Measure': None,
+        'Runtime (s)': None,
+        'Memory (MB)': None
+    })
+    results.append({
+        'Model': 'LSA',
+        'Coherence': None,
+        'Diversity': None,
+        'ARI': lsa_results['Accuracy'].max(),
+        'NMI': None,
+        'Homogeneity': None,
+        'Completeness': None,
+        'V-Measure': None,
+        'Runtime (s)': None,
+        'Memory (MB)': None
+    })
+    results.append({
+        'Model': 'BoW/TF-IDF',
+        'Coherence': None,
+        'Diversity': None,
+        'ARI': bow_tfidf_results['Accuracy'].max(),
+        'NMI': None,
+        'Homogeneity': None,
+        'Completeness': None,
+        'V-Measure': None,
+        'Runtime (s)': None,
+        'Memory (MB)': None
+    })
+
+
+    # --- 4. Evaluate Approach 3: BERTopic ---
+    print("\n--- 4. Evaluating Approach 3: BERTopic ---")
     def train_bertopic():
         model = AGNewsTopicModeling()
         # Workaround for hardcoded 'labels' column in 3_approach
@@ -111,8 +158,8 @@ def run_evaluation():
             'Memory (MB)': bertopic_benchmark['memory_usage_mb']
         })
 
-    # --- 4. Final Comparison ---
-    print("\n--- 4. Final Comparison ---")
+    # --- 5. Final Comparison ---
+    print("\n--- 5. Final Comparison ---")
     results_df = pd.DataFrame(results)
     print(results_df.to_markdown(index=False))
     
