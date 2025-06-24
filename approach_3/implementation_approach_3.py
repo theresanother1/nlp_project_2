@@ -549,8 +549,8 @@ class AGNewsTopicModeling:
         print(f"Predicted topic counts (train): {topic_counts}")
 
         # Get predicted topic counts
-        topic_counts = Counter(test_topics)
-        print(f"Predicted topic counts (test): {test_topics}")
+        test_topic_count = Counter(test_topics)
+        print(f"Predicted topic counts (test): {test_topic_count}")
 
         # Handle outliers (-1 topics) by assigning to closest topic
         if -1 in topics:
