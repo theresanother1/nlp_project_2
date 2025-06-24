@@ -1,7 +1,7 @@
-# AG-News Topic Modeling Study
-# Comprehensive evaluation of modern topic modeling approaches
 import os
 import umap
+import hdbscan
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import kagglehub
 import pandas as pd
@@ -11,7 +11,7 @@ import re
 from collections import Counter
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import confusion_matrix, classification_report
 from scipy.optimize import linear_sum_assignment
 from sklearn.metrics import confusion_matrix
 from nltk.corpus import stopwords
@@ -23,8 +23,24 @@ from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.model_selection import train_test_split
 import warnings
 import sys
+from wordcloud import WordCloud
+from matplotlib.gridspec import GridSpec
+# Example usage:
+# visualize_top2vec_reduction(reduction_result, num_topics=4, num_words=8)
+
+
+from bs4 import BeautifulSoup
+from io import StringIO
+import html
+
+import urllib.parse
+import pandas as pd
+import numpy as np
+import re
+
 sys.path.append(os.path.abspath(os.path.join('..')))
 from data_pipeline import data_processing
+
 warnings.filterwarnings('ignore')
 
 # Topic modeling libraries
@@ -45,17 +61,6 @@ except ImportError:
     print("Top2Vec not available. Install with: pip install top2vec")
     TOP2VEC_AVAILABLE = False
 
-try:
-    import torch
-    import torch.nn as nn
-    import torch.optim as optim
-    from torch.utils.data import DataLoader, TensorDataset
-
-    PYTORCH_AVAILABLE = True
-except ImportError:
-    print("PyTorch not available for neural topic models")
-    PYTORCH_AVAILABLE = False
-
 
 class AGNewsTopicModeling:
     """
@@ -71,61 +76,85 @@ class AGNewsTopicModeling:
         self.test_labels = []
         self.results = {}
 
-        # AG-News categories
+        # AG-News categories starting with 0
         self.category_names = {0: 'World', 1: 'Sports', 2: 'Business', 3: 'Sci/Tech'}
 
     def _preprocess_text(self, texts):
         processed_texts = []
-        valid_indices = []
-        #print("PREPROCESSING TEXTS...")
+        numeric_entity_pattern = r'#(\d+);'
+        # print("PREPROCESSING TEXTS...")
         for i, text in enumerate(texts):
-            #rint("before PREPROCESS")
-            #print(texts)
-            text = str(text).lower()
+            # Replace numeric entities
+            def replace_entity(match):
+                return chr(int(match.group(1)))
+
+            clean_text = re.sub(numeric_entity_pattern, replace_entity, text)
+            # Remove common web-related tokens and first-level domains
+            clean_text = re.sub(r'\b(http|www|href|aspx|com|org|net|edu|gov|info|biz)\b', '', clean_text,
+                                flags=re.IGNORECASE)
+            # Remove weekdays (full and abbreviations)
+            clean_text = re.sub(
+                r'\b(Monday|Mon|Tuesday|Tue|Tues|Wednesday|Wed|Thursday|Thu|Thurs|Friday|Fri|Saturday|Sat|Sunday|Sun)\b',
+                '', clean_text, flags=re.IGNORECASE)
+            # Remove extra whitespace
+            clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+
+            clean_text = str(clean_text).lower()
 
             # Remove special characters and numbers (if still there)
-            text = re.sub(r'[^\w\s]', ' ', text)
-            text = re.sub(r'\d+', ' ', text)
+            clean_text = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+',
+                                ' URL ', clean_text)
+            clean_text = re.sub(r'\S+@\S+', ' EMAIL ', clean_text)
+            clean_text = clean_text.split()
+            # remove single letter words. 2 and 3 letter words may stay, as eu, us etc are valid
+            clean_text = [word for word in clean_text if
+                          len(word) > 1 and word not in ['and', 'to', 'in', 'the', 'of', 'for', 'on', 'as', 'is', 'ap',
+                                                         'by', 'has', 'reuters', 'that', 'an', 'was', 'at', 'with',
+                                                         'its', 'be', 'from', 'it', 'his', 'will', 'are', 'he', 'have',
+                                                         'this', 'but']]
+            clean_text = " ".join(clean_text).strip()
+            processed_texts.append(clean_text)
+        return processed_texts
 
-            text = text.strip()
-            text = text.split()
-            #print("BEFORE STOPWORDS")
-            #print(text)
-            #print(stopwords.words('english'))
-            text = [word for word in text if len(word) > 2]
-
-            #if len(text) > 10:  # Only keep texts with meaningful content
-            processed_texts.append(" ".join(text))
-        return processed_texts, valid_indices
-
-
-
-    def load_and_preprocess_data(self, train_data, test_data, text_column='Combined', label_column='labels'):
+    def load_and_preprocess_data(self, train_data, test_data, text_column='Description', label_column='labels'):
         """
         Load and preprocess AG-News data with given preprocessing pipeline
         """
         print("Loading and preprocessing AG-News data...")
-        #self.initialize_nltk()
-
         # Extract texts and labels
-        texts = train_data[text_column].tolist()
-        print("LABELS are:")
 
+        print("train df ", train_data.shape)
+        print("test df ", test_data.shape)
+
+        # make labels fit to standard conventions starting with 0 (for bertopic etc easier)
+        train_data[label_column] = train_data[label_column].apply(lambda x: x - 1)
+        test_data[label_column] = test_data[label_column].apply(lambda x: x - 1)
+
+        print("LABELS are:")
         print(set(train_data[label_column].tolist()))
+
+        texts = train_data[text_column].tolist()
+        # print("TEXTS from train_df", texts)
         self.labels = train_data[label_column].tolist()
-        processed_texts, _ = self._preprocess_text(texts)
+        processed_texts = self._preprocess_text(texts)
 
         test_texts = test_data[text_column].tolist()
         self.test_labels = test_data[label_column].tolist()
-        processed_test_texts, _ = self._preprocess_text(test_texts)
+        processed_test_texts = self._preprocess_text(test_texts)
 
         self.processed_texts = processed_texts
         self.test_texts = processed_test_texts
-        #print("Train")
-        #print(processed_texts)
-        #print("Test")
-        #print(processed_test_texts)
+        # print("Train")
+        # print(processed_texts)
+        # print("Test")
+        # print(processed_test_texts)
 
+        # Find optimal k
+        embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        # Generate embeddings for optimal k finding
+        print("Generating embeddings for optimal k calculation...")
+        embeddings = embedding_model.encode(self.processed_texts)
+        self.elbow_k, silhouette_k, _, _ = self.find_optimal_clusters_elbow(embeddings)
         print(f"Loaded {len(self.processed_texts)} training texts and {len(self.test_texts)} test texts")
         print(f"Categories distribution: {Counter(self.labels)}")
 
@@ -172,425 +201,675 @@ class AGNewsTopicModeling:
         ax2.axvline(x=best_silhouette_k, color='r', linestyle='--')
         ax2.set_xlabel('Number of Clusters (k)')
         ax2.set_ylabel('Silhouette Score')
-        ax2.set_title('Silhouette Score vs Number of Clusters')
+        ax2.set_title(f'Silhouette Score vs Number of Clusters - {self.column}')
         ax2.grid(True)
 
         plt.tight_layout()
-        plt.savefig("elbow_vs_silhouette.png", dpi=300, bbox_inches="tight", pad_inches=0.25, facecolor="white",)
+        plt.savefig(f"elbow_vs_silhouette_{self.column}.png", dpi=300, bbox_inches="tight", pad_inches=0.25,
+                    facecolor="white", )
         plt.show()
-
 
         return elbow_k, best_silhouette_k, sse, silhouette_scores
 
     def evaluate_topic_model(self, predicted_topics, true_labels, model_name):
         """
-        Evaluate topic model performance against ground truth labels
+        Enhanced evaluation with topic-label alignment and additional metrics
         """
-        #print("PREDICTED")
-        #print(set(predicted_topics))
-        #print("TRUE")
-        #print(set(true_labels))
-        # Convert to numpy arrays
         predicted_topics = np.array(predicted_topics)
         true_labels = np.array(true_labels)
 
-        # Calculate clustering metrics
+        # Remove any samples where preprocessing failed (empty predictions)
+        valid_mask = (predicted_topics != -1) & (true_labels != -1)
+        predicted_topics = predicted_topics[valid_mask]
+        true_labels = true_labels[valid_mask]
+
+        if len(predicted_topics) == 0:
+            print(f"No valid predictions for {model_name}")
+            return {}
+
+        # Standard clustering metrics
         ari = adjusted_rand_score(true_labels, predicted_topics)
         nmi = normalized_mutual_info_score(true_labels, predicted_topics)
         homogeneity = homogeneity_score(true_labels, predicted_topics)
         completeness = completeness_score(true_labels, predicted_topics)
         v_measure = v_measure_score(true_labels, predicted_topics)
 
+        # Hungarian algorithm for optimal topic-label alignment
+        # Create confusion matrix
+        cm = confusion_matrix(true_labels, predicted_topics)
+
+        # Find optimal assignment using Hungarian algorithm
+        row_ind, col_ind = linear_sum_assignment(-cm)  # Negative for maximization
+
+        # Calculate accuracy with optimal alignment
+        aligned_accuracy = cm[row_ind, col_ind].sum() / cm.sum()
+
+        # Calculate per-class metrics with alignment
+        aligned_predictions = np.zeros_like(predicted_topics)
+        topic_to_label_map = {}
+
+        # print("PREDICTED TOPICS: ", set(predicted_topics))
+
+        for true_label, pred_topic in zip(row_ind, col_ind):
+            topic_to_label_map[pred_topic] = true_label
+            aligned_predictions[predicted_topics == pred_topic] = true_label
+
+        # Per-class precision, recall, F1
+        class_report = classification_report(true_labels, aligned_predictions,
+                                             target_names=[self.category_names[i] for i in range(4)],
+                                             output_dict=True, zero_division=0)
+
         metrics = {
             'ARI': ari,
             'NMI': nmi,
             'Homogeneity': homogeneity,
             'Completeness': completeness,
-            'V-Measure': v_measure
+            'V-Measure': v_measure,
+            'Aligned_Accuracy': aligned_accuracy,
+            'Macro_F1': class_report['macro avg']['f1-score'],
+            'Weighted_F1': class_report['weighted avg']['f1-score']
         }
 
         print(f"\n{model_name} Performance:")
         for metric, value in metrics.items():
             print(f"{metric}: {value:.4f}")
 
-        return metrics
+        # Show topic-label alignment
+        # print("TOPIC-LABEL-ALIGNMENT-MAP")
+        # print(topic_to_label_map)
+        print(f"\nOptimal Topic-Label Alignment:")
+        for pred_topic, true_label in topic_to_label_map.items():
+            print(f"Topic {pred_topic} -> {self.category_names[true_label]} "
+                  f"({cm[true_label, pred_topic]} samples)")
 
+        # Create and save confusion matrix plot
+        self.plot_confusion_matrix(cm, row_ind, col_ind, model_name)
 
-    def run_bertopic(self, n_topics=4):
+        return metrics, aligned_predictions
+
+    def plot_confusion_matrix(self, cm, row_ind, col_ind, model_name):
         """
-        Implement BERTopic with AG-News embeddings
+        Plot confusion matrix with optimal alignment highlighted
+        """
+        # Create figure with adjusted layout
+        fig = plt.figure(figsize=(16, 6))
+
+        # Create aligned confusion matrix for visualization
+        aligned_cm = np.zeros_like(cm)
+        for i, j in zip(row_ind, col_ind):
+            aligned_cm[i, j] = cm[i, j]
+
+        # Plot original confusion matrix
+        plt.subplot(1, 2, 1)
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                    xticklabels=[f'Topic {i}' for i in range(cm.shape[1])],
+                    yticklabels=[self.category_names[i] for i in range(cm.shape[0])])
+        plt.title(f'{model_name} - Original CM {self.column} \n', fontsize=12, pad=20)  # Added padding
+        plt.ylabel('True Labels', fontsize=10)
+        plt.xlabel('Predicted Topics', fontsize=10)
+
+        # Plot with optimal alignment highlighted
+        plt.subplot(1, 2, 2)
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                    xticklabels=[f'Topic {i}' for i in range(cm.shape[1])],
+                    yticklabels=[self.category_names[i] for i in range(cm.shape[0])])
+
+        # Highlight optimal alignment
+        for i, j in zip(row_ind, col_ind):
+            plt.gca().add_patch(plt.Rectangle((j, i), 1, 1, fill=False,
+                                              edgecolor='red', lw=3))
+
+        plt.title(f'{model_name} - Optimal Alignment - {self.column}\n', fontsize=12, pad=20)  # Added padding
+        plt.ylabel('True Labels', fontsize=10)
+        plt.xlabel('Predicted Topics', fontsize=10)
+
+        # Adjust layout with more padding
+        plt.tight_layout(pad=3.0, w_pad=5.0, h_pad=2.0)
+
+        # Save with proper bounding box
+        plt.savefig(f"{model_name.replace(' ', '_')}_confusion_matrix_{self.column}.png",
+                    dpi=300, bbox_inches='tight')
+        plt.show()
+
+    def plot_topic_sizes_bert(self, model, model_name, num_topics=None):
+        """
+        Plot distribution of topic sizes for BERTopic including outliers
+
+        Args:
+            model: Trained BERTopic model
+            model_name: Name of the model for title/saving
+            num_topics: Number of topics to display (None for all)
+        """
+        # Get topic info
+        topic_info = model.get_topic_info()
+        topic_sizes = topic_info.set_index('Topic')['Count'].to_dict()
+
+        # Prepare data
+        sizes = []
+        labels = []
+        colors = []
+
+        # add outliers
+        if -1 in topic_sizes:
+            sizes.append(topic_sizes[-1])
+            labels.append("Outliers (-1)")
+            colors.append('#cccccc')  # Gray for outliers
+
+        # Add regular topics
+        regular_topics = [(topic, size) for topic, size in topic_sizes.items() if topic != -1]
+
+        # Sort by size (descending)
+        regular_topics.sort(key=lambda x: x[1], reverse=True)
+
+        # Limit number of topics if specified
+        if num_topics is not None:
+            regular_topics = regular_topics[:num_topics]
+
+        # Add to plot data
+        for topic, size in regular_topics:
+            sizes.append(size)
+            labels.append(f"Topic {topic}")
+
+        # Create color gradient for regular topics
+        num_regular = len(regular_topics)
+        if num_regular > 0:
+            regular_colors = plt.cm.tab20(np.linspace(0, 1, num_regular))
+            colors.extend(regular_colors)
+
+        # Plot
+        plt.figure(figsize=(10, 6))
+        y_pos = np.arange(len(sizes))
+
+        bars = plt.barh(y_pos, sizes, color=colors)
+        plt.yticks(y_pos, labels)
+        plt.gca().invert_yaxis()
+
+        # Add value labels
+        for i, bar in enumerate(bars):
+            width = bar.get_width()
+            plt.text(width + max(sizes) * 0.01, bar.get_y() + bar.get_height() / 2,
+                     f'{int(width)}',
+                     va='center', ha='left')
+
+        plt.xlabel('Number of Documents')
+        plt.title(f'{model_name} - Topic Distribution {self.column} \n(Total documents: {sum(sizes)})')
+        plt.grid(axis='x', linestyle='--', alpha=0.6)
+
+        # Adjust margins and save
+        plt.tight_layout()
+        plt.savefig(f"{model_name.replace(' ', '_')}_topic_distribution_{self.column}.png",
+                    dpi=300, bbox_inches='tight')
+        plt.show()
+
+    def plot_topic_words_bert(self, model, model_name, num_topics=None, num_words=10):
+        """
+        Plot top words for each topic in a table format including outliers
+
+        Args:
+            model: Trained BERTopic model
+            model_name: Name for title/saving
+            num_topics: Number of topics to display
+            num_words: Number of words per topic to show
+        """
+        # Get topic info
+        topic_info = model.get_topic_info()
+
+        # Prepare topics to show
+        topics_to_show = [t for t in topic_info['Topic'] if t != -1][:num_topics]
+        if -1 in topic_info['Topic'].values:
+            topics_to_show = [-1] + topics_to_show  # Add outliers first
+
+        fig, ax = plt.subplots(figsize=(10, max(6, len(topics_to_show) * 0.5)))
+
+        # Prepare colors (gray for outliers)
+        colors = []
+        if -1 in topics_to_show:
+            colors.append('#cccccc')  # Gray for outliers
+        colors.extend(plt.cm.tab20(np.linspace(0, 1, len(topics_to_show) - len(colors))))
+
+        cell_text = []
+        for topic in topics_to_show:
+            words_scores = model.get_topic(topic)
+            words = [word for word, score in words_scores[:num_words]]
+            scores = [score for word, score in words_scores[:num_words]]
+            cell_text.append([f"{word} ({score:.2f})" for word, score in zip(words, scores)])
+
+        # Create table
+        table = ax.table(
+            cellText=cell_text,
+            rowLabels=[f"Outliers (-1)" if topic == -1 else f"Topic {topic}"
+                       for topic in topics_to_show],
+            rowColours=colors,
+            colLabels=[f"Rank {i + 1}" for i in range(num_words)],
+            loc='center'
+        )
+
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+        table.scale(1, 1.5)
+        ax.axis('off')
+        plt.title(f'{model_name} Top {num_words} Words per Topic - {self.column}', pad=20)
+        plt.tight_layout()
+        plt.savefig(f"{model_name.replace(' ', '_')}_words_per_topic_{self.column}.png", dpi=300, bbox_inches='tight')
+        plt.show()
+
+    def plot_wordclouds_bert(self, model, model_name, num_topics=None, words_per_cloud=20):
+        """
+        Generate word clouds for each topic including outliers
+
+        Args:
+            model: Trained BERTopic model
+            model_name: Name for title/saving
+            num_topics: Number of topics to visualize
+            words_per_cloud: Number of words to include in each word cloud
+        """
+        # Get topic info
+        topic_info = model.get_topic_info()
+
+        # Prepare topics to show
+        topics_to_show = [t for t in topic_info['Topic'] if t != -1][:num_topics]
+        if -1 in topic_info['Topic'].values:
+            topics_to_show = [-1] + topics_to_show  # Add outliers first
+
+        rows = (len(topics_to_show) + 1) // 2
+        plt.figure(figsize=(16, 4 * rows))
+        plt.suptitle(f"{model_name} Topic Word Clouds", y=1.02)
+
+        for i, topic in enumerate(topics_to_show):
+            plt.subplot(rows, 2, i + 1)
+            words_scores = model.get_topic(topic)
+            word_weights = {word: score for word, score in words_scores[:words_per_cloud]}
+
+            # Custom color for outliers
+            colormap = 'Greys' if topic == -1 else 'tab20'
+
+            wc = WordCloud(
+                width=600,
+                height=300,
+                background_color='white',
+                colormap=colormap
+            )
+            wc.generate_from_frequencies(word_weights)
+            plt.imshow(wc, interpolation='bilinear')
+            plt.title(f"Outliers (-1)" if topic == -1 else f"Topic {topic}", fontsize=12)
+            plt.axis('off')
+
+        plt.tight_layout(pad=2.0)
+        plt.savefig(f"{model_name.replace(' ', '_')}_topic_wordclouds_{self.column}.png", dpi=300, bbox_inches='tight')
+        plt.show()
+
+    def run_bertopic(self, model_name):
+        """
+        BERTopic with AG-News embeddings
         """
         if not BERTOPIC_AVAILABLE:
             print("BERTopic not available. Skipping...")
             return None, None
 
-        print("\n=== Implementing BERTopic ===")
+        print(f"\n=== Running BERTopic {model_name} ===")
 
-        model_name = 'all-MiniLM-L6-v2'
         # Use sentence transformer for embeddings
         embedding_model = SentenceTransformer(model_name)
 
-        # Generate embeddings for optimal k finding
-        print("Generating embeddings for optimal k calculation...")
-        embeddings = embedding_model.encode(self.processed_texts)
+        umap_model = umap.UMAP(
+            n_neighbors=10,
+            n_components=5,
+            metric='cosine',
+            random_state=42
+        )
 
-        # Find optimal k
-        #elbow_k, silhouette_k, _, _ = self.find_optimal_clusters_elbow(embeddings)
-        elbow_k = n_topics
+        hdbscan_model = hdbscan.HDBSCAN(
+            min_cluster_size=10,
+            min_samples=5,
+            metric='euclidean',
+            cluster_selection_method="eom",
+            prediction_data=True
+        )
 
         # Initialize BERTopic with optimal number of topics
         topic_model = BERTopic(
-            nr_topics=elbow_k,
-            min_topic_size=5,
+            nr_topics=self.elbow_k + 1,  # + 1 for outlier class
+            min_topic_size=2,
             embedding_model=embedding_model,
+            umap_model=umap_model,
+            hdbscan_model=hdbscan_model,
+            calculate_probabilities=True,
             verbose=True
         )
 
         # Fit the model
-        print("Fitting BERTopic model...")
+        print(f"Fitting BERTopic {model_name} model...")
         topics, probs = topic_model.fit_transform(self.processed_texts)
 
         # Test on test set
         test_topics, test_probs = topic_model.transform(self.test_texts)
 
-        # Evaluate performance
-        train_metrics = self.evaluate_topic_model(topics, self.labels, f"BERTopic (Train) - {model_name}")
-        test_metrics = self.evaluate_topic_model(test_topics, self.test_labels, f"BERTopic (Test) - {model_name}")
+        # Get predicted topic counts
+        topic_counts = Counter(topics)
+        print(f"Predicted topic counts (train): {topic_counts}")
 
-        # Store results
-        self.results['BERTopic'] = {
+        # Get predicted topic counts
+        topic_counts = Counter(test_topics)
+        print(f"Predicted topic counts (test): {test_topics}")
+
+        # Handle outliers (-1 topics) by assigning to closest topic
+        if -1 in topics:
+            print(f"Found {sum(t == -1 for t in topics)} outlier documents in training")
+            # Assign outliers to most probable topic
+            for i, (topic, prob_dist) in enumerate(zip(topics, probs)):
+                if topic == -1:
+                    topics[i] = np.argmax(prob_dist)
+
+        if -1 in test_topics:
+            print(f"Found {sum(t == -1 for t in test_topics)} outlier documents in test")
+            for i, (topic, prob_dist) in enumerate(zip(test_topics, test_probs)):
+                if topic == -1:
+                    test_topics[i] = np.argmax(prob_dist)
+
+        # Evaluate performance
+        train_metrics, _ = self.evaluate_topic_model(topics, self.labels, f"(Train)-{model_name}")
+        test_metrics, _ = self.evaluate_topic_model(test_topics, self.test_labels, f"(Test)-{model_name}")
+
+        self.plot_topic_sizes_bert(topic_model, model_name=model_name, num_topics=None)
+
+        self.plot_topic_words_bert(topic_model, model_name=model_name, num_topics=None, num_words=5)
+        self.plot_wordclouds_bert(topic_model, model_name=model_name, num_topics=None, words_per_cloud=20)
+
+        self.results[f'BERT_{model_name}'] = {
             'train_metrics': train_metrics,
             'test_metrics': test_metrics,
-            'model': topic_model,
             'train_topics': topics,
-            'test_topics': test_topics
+            'test_topics': test_topics,
+            'model': topic_model
         }
 
-        # UMAP-Reduktion auf 2D
-        umap_model = umap.UMAP(n_neighbors=15, n_components=2, metric='cosine')
+        # UMAP-Reduction
+        embeddings = embedding_model.encode(self.processed_texts)
         reduced_embeddings = umap_model.fit_transform(embeddings)
         reduced_embeddings_embeddings_test = umap_model.transform(embedding_model.encode(self.test_texts))
 
-        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+        _, axes = plt.subplots(1, 2, figsize=(16, 6))
 
-        # Plot mit echten Labels
         axes[0].scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], c=self.labels, cmap='tab10', s=10)
-        axes[0].set_title("UMAP Projection (Ground Truth) - Train")
+        axes[0].set_title(f"UMAP Projection (Ground Truth) - Train - {self.column}")
         axes[1].scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], c=topics, cmap='tab10', s=10)
-        axes[1].set_title("UMAP Projection (BERTopic Topics) - Train")
+        axes[1].set_title(f"UMAP Projection ({model_name}) - Train - {self.column}")
+        plt.savefig(f"{model_name}-UMAP-Projection-Train_{self.column}.png")
+
         plt.show()
 
-        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+        _, axes = plt.subplots(1, 2, figsize=(16, 6))
 
-        # Plot mit echten Labels
-        axes[0].scatter(reduced_embeddings_embeddings_test[:, 0], reduced_embeddings_embeddings_test[:, 1], c=self.test_labels, cmap='tab10', s=10)
-        axes[0].set_title("UMAP Projection (Ground Truth) - Train")
-        axes[1].scatter(reduced_embeddings_embeddings_test[:, 0], reduced_embeddings_embeddings_test[:, 1], c=test_topics, cmap='tab10', s=10)
-        axes[1].set_title("UMAP Projection (BERTopic Topics) - Train")
+        axes[0].scatter(reduced_embeddings_embeddings_test[:, 0], reduced_embeddings_embeddings_test[:, 1],
+                        c=self.test_labels, cmap='tab10', s=10)
+        axes[0].set_title(f"UMAP Projection (Ground Truth) - Test - {self.column}")
+        axes[1].scatter(reduced_embeddings_embeddings_test[:, 0], reduced_embeddings_embeddings_test[:, 1],
+                        c=test_topics, cmap='tab10', s=10)
+        axes[1].set_title(f"UMAP Projection ({model_name}) - Test - {self.column}")
+        plt.savefig(f"{model_name}-UMAP-Projection-Test-{self.column}.png")
         plt.show()
-
 
         # Display topic information
         print("\nTop words per topic:")
         topic_info = topic_model.get_topic_info()
         print(topic_info.head(10))
 
-        return topic_model, topics
+        # Show representative documents for each topic
+        for topic_id in range(self.elbow_k):
+            print(f"\nTopic {topic_id} - Representative documents:")
+            topic_docs = [doc for i, doc in enumerate(self.processed_texts) if topics[i] == topic_id]
+            if topic_docs:
+                print(f"  Example: {topic_docs[0][:200]}...")
 
-    def run_top2vec(self):
+        # Quick evaluation
+        test_nmi = normalized_mutual_info_score(self.test_labels, test_topics)
+        print(f"{model_name} Test NMI: {test_nmi:.4f}")
+
+        return test_nmi, topic_model, topics, test_topics
+
+    def run_top2vec(self, speed="learn"):
         """
-        Implement and test Top2Vec integration
+        Top2Vec Implementation
         """
         if not TOP2VEC_AVAILABLE:
             print("Top2Vec not available. Skipping...")
             return None, None
 
-        print("\n=== Implementing Top2Vec ===")
+        print("\n=== Running Top2Vec for Exploration ===")
+        print(f"Training Top2Vec on {len(self.processed_texts)} documents...")
+        umap_args = {'n_neighbors': 10,
+                     'n_components': 5,
+                     'metric': 'cosine',
+                     "random_state": 42}
+        hdbscan_args = {'min_cluster_size': 10,
+                        'min_samples': 5,
+                        'metric': 'euclidean',
+                        'cluster_selection_method': 'eom'}
+        model = Top2Vec(documents=self.processed_texts,
+                        speed=speed,
+                        workers=2,
+                        embedding_model='universal-sentence-encoder',
+                        umap_args=umap_args,
+                        hdbscan_args=hdbscan_args,
+                        min_count=2,
+                        embedding_batch_size=1000,
+                        split_documents=False,
+                        verbose=True
+                        )
 
-        # Initialize Top2Vec
-        print("Training Top2Vec model...")
-        model = Top2Vec(
-            documents=self.processed_texts,
-            speed="learn",  # Options: learn, fast-learn, deep-learn
-            workers=4,
-            min_count=5
+        original_topics = model.get_num_topics()
+        print(f"Top2Vec found {original_topics} topics")
+
+        if original_topics > self.elbow_k:
+            print("Before reduction:", model.get_num_topics())
+            result = model.hierarchical_topic_reduction(num_topics=self.elbow_k)
+            print("After reduction:", len(result))
+            print("Reduction result:", result)
+            self.visualize_top2vec_reduction(model, num_topics=self.elbow_k, num_words=8)
+
+        elif original_topics < self.elbow_k:
+            print(f"Warning: Less than {self.elbow_k} topics found - data might not support  {self.elbow_k} clusters")
+
+        train_metrics, _ = self.evaluate_topic_model(model.doc_top_reduced, self.labels, "Top2Vec (Train)")
+
+        # Test set evaluation
+        test_metrics = None
+        if self.test_texts is not None:
+            print("\nEvaluating on test set...")
+
+            # Get topic assignments for test documents
+            test_doc_topics, test_doc_scores = [], []
+
+            for doc in self.test_texts:
+                try:
+                    _, _, topic_scores, topic_nums = model.query_topics(doc, num_topics=1)
+
+                    if len(topic_nums) > 0:
+                        test_doc_topics.append(topic_nums[0])
+                        test_doc_scores.append(topic_scores[0])
+                    else:
+                        test_doc_topics.append(-1)  # No topic found
+                        test_doc_scores.append(0)
+
+                except Exception as e:
+                    print(f"Error processing document: {str(e)[:100]}...")
+                    test_doc_topics.append(-1)
+                    test_doc_scores.append(0)
+
+            if self.test_labels is not None:
+                topic_mapping = {}
+                for reduced_idx, sublist in enumerate(result):
+                    for topic_num in sublist:
+                        topic_mapping[topic_num] = reduced_idx
+
+                test_doc_topics = [topic_mapping[topic_num] for topic_num in test_doc_topics]
+                test_metrics, _ = self.evaluate_topic_model(test_doc_topics, self.test_labels, "Top2Vec (Test)")
+
+                # Print assignment quality stats
+                assigned_mask = np.array(test_doc_topics) != -1
+                print(f"\nTest Set Assignment Quality:")
+                print(f"Assigned documents: {sum(assigned_mask)}/{len(self.test_texts)}")
+                print(f"Mean assignment score: {np.mean(np.array(test_doc_scores)[assigned_mask]):.2f}")
+                print(f"Median assignment score: {np.median(np.array(test_doc_scores)[assigned_mask]):.2f}")
+
+        umap_model = umap.UMAP(
+            n_neighbors=10,
+            n_components=5,
+            metric='cosine',
+            random_state=42
         )
 
-        print(f"Top2Vec found {model.get_num_topics()} topics")
+        reduced_embeddings = umap_model.fit_transform(model.document_vectors)
 
-        train_topics = []
-        # Use get_documents_topics directly
-        try:
-            for i in range(len(self.processed_texts)):
-                doc_topics, doc_scores = model.get_documents_topics([i])
-                if len(doc_topics) > 0:
-                    train_topics.append(doc_topics[0])
-                else:
-                    train_topics.append(-1)
-        except Exception as e:
-            print(f"Error getting document topics directly: {e}")
-            # Fallback using search_documents_by_documents
-            try:
-                for i in range(len(self.processed_texts)):
-                    # Top2Vec search_documents_by_documents returns 3 values, not 4
-                    topic_nums, topic_scores, doc_scores = model.search_documents_by_documents([i], num_docs=1)
-                    if len(topic_nums) > 0:
-                        train_topics.append(topic_nums[0])
-                    else:
-                        train_topics.append(-1)
-            except Exception as e2:
-                print(f"Error with search method: {e2}")
-                # Final fallback - assign random topics
-                num_topics = model.get_num_topics()
-                train_topics = [i % num_topics for i in range(len(self.processed_texts))]
+        _, axes = plt.subplots(1, 2, figsize=(16, 6))
 
-
-        # For test set, we need to infer topics
-        test_topics = []
-        for test_doc in self.test_texts:
-            try:
-                # Search for similar documents
-                topic_nums, topic_scores, doc_scores, doc_ids = model.search_documents_by_keywords([test_doc],
-                                                                                                   num_docs=1)
-                if len(topic_nums) > 0:
-                    test_topics.append(topic_nums[0])
-                else:
-                    test_topics.append(-1)
-            except:
-                test_topics.append(-1)
-
-        # Evaluate performance
-        train_metrics = self.evaluate_topic_model(train_topics, self.labels, "Top2Vec (Train)")
-        test_metrics = self.evaluate_topic_model(test_topics, self.test_labels, "Top2Vec (Test)")
+        axes[0].scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], c=self.labels, cmap='tab10', s=10)
+        axes[0].set_title(f"UMAP Projection (Ground Truth) - Train - {self.column}")
+        axes[1].scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], c=model.doc_top_reduced, cmap='tab10', s=10)
+        axes[1].set_title(f"UMAP Projection (Top2Vec)) - Train - {self.column}")
+        plt.savefig(f"(Top2Vec)-UMAP-Projection-Train-{self.column}.png")
+        plt.show()
 
         # Store results
         self.results['Top2Vec'] = {
             'train_metrics': train_metrics,
             'test_metrics': test_metrics,
+            'train_topics': model.doc_top_reduced,
+            'test_topics': test_doc_topics,
             'model': model,
-            'train_topics': train_topics,
-            'test_topics': test_topics
+            'test_assignments': list(
+                zip(self.test_texts, test_doc_topics, test_doc_scores)) if self.test_texts else None
         }
 
-        print(train_topics)
+        return model
 
+    def plot_topic_sizes(self, model, num_topics=None):
+        if num_topics is None:
+            num_topics = len(model.topic_sizes_reduced)
 
-        # Display topic words
-        print("\nTop words per topic:")
-        print("GET NUM TOPICS")
-        print(model.get_num_topics())
-        topics = model.get_topics()
+        plt.figure(figsize=(8, 6))
+        colors = plt.cm.tab20(np.linspace(0, 1, num_topics))
 
+        plt.barh(range(num_topics),
+                 model.topic_sizes_reduced[:num_topics],
+                 color=colors)
 
-        for i in range(min(model.get_num_topics(), 8)):
-            # print("TOPICS top words are ")
-            print(topics[0][i])
+        plt.yticks(range(num_topics), [f"Topic {i}" for i in range(num_topics)])
+        plt.gca().invert_yaxis()
+        plt.xlabel('Number of Documents')
+        plt.title(f'Top2Vec Topic Distribution - {self.column}')
+        plt.tight_layout()
+        plt.savefig(f"TOP2VEC-Topic-distribution-{self.column}.png")
+        plt.show()
 
-            print(f"Topic {i}: {', '.join(topics[0][i][:10])}")
+    def plot_topic_words(self, model, num_topics=None, num_words=10):
+        if num_topics is None:
+            num_topics = len(model.topic_words_reduced)
 
-        return model, train_topics
+        fig, ax = plt.subplots(figsize=(10, max(6, num_topics * 0.5)))
+        colors = plt.cm.tab20(np.linspace(0, 1, num_topics))
 
-    def run_neural_topic_model(self, n_topics=4, epochs=100):
+        cell_text = []
+        for i in range(num_topics):
+            words = model.topic_words_reduced[i][:num_words]
+            scores = model.topic_word_scores_reduced[i][:num_words]
+            cell_text.append([f"{word} ({score:.2f})" for word, score in zip(words, scores)])
+
+        table = ax.table(cellText=cell_text,
+                         rowLabels=[f"Topic {i}" for i in range(num_topics)],
+                         rowColours=colors,
+                         colLabels=[f"Rank {i + 1}" for i in range(num_words)],
+                         loc='center')
+
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+        table.scale(1, 1.5)
+        ax.axis('off')
+        plt.title(f'Top2Vec Top {num_words} Words per Topic - {self.column}', pad=20)
+        plt.tight_layout()
+        plt.savefig(f"TOP2VEC-words-per-topic-{self.column}.png")
+
+        plt.show()
+
+    def plot_wordclouds(self, model, num_topics=None, words_per_cloud=20):
+        if num_topics is None:
+            num_topics = len(model.topic_words_reduced)
+
+        rows = (num_topics + 1) // 2
+        plt.figure(figsize=(16, 4 * rows))
+
+        for i in range(num_topics):
+            plt.subplot(rows, 2, i + 1)
+            word_weights = {word: score for word, score in
+                            zip(model.topic_words_reduced[i][:words_per_cloud],
+                                model.topic_word_scores_reduced[i][:words_per_cloud])}
+
+            wc = WordCloud(width=600, height=300,
+                           background_color='white', colormap='tab20')
+            wc.generate_from_frequencies(word_weights)
+            plt.imshow(wc, interpolation='bilinear')
+            plt.title(f'Topic {i}', fontsize=12)
+            plt.axis('off')
+
+        plt.tight_layout(pad=2.0)
+        plt.savefig(f"TOP2VEC-Topic-wordclouds-{self.column}.png")
+        plt.show()
+
+    def visualize_top2vec_reduction(self, model, num_topics=None, num_words=10):
         """
-        Implement Neural Topic Models using OCTIS ProdLDA
+        Visualizes the reduced topics from a Top2Vec model after hierarchical reduction.
+
+        Args:
+            model: The Top2Vec model after hierarchical reduction
+            num_topics: Number of topics to display (None for all)
+            num_words: Number of top words to show in the table
         """
-        try:
-            from octis.models.ProdLDA import ProdLDA
-            from octis.dataset.dataset import Dataset
-        except ImportError:
-            print("OCTIS not available. Installing OCTIS is required for ProdLDA...")
-            print("Please install with: pip install octis")
-            return self.implement_lda_baseline(n_topics)
+        if num_topics is None:
+            num_topics = len(model.topic_words_reduced)
 
-        print("\n=== Implementing Neural Topic Model (OCTIS ProdLDA) ===")
-
-        # Prepare data in OCTIS format
-        # OCTIS expects documents as lists of tokens
-        train_docs = [text.split() for text in self.processed_texts]
-        test_docs = [text.split() for text in self.test_texts]
-
-        # Create vocabulary from training data
-        vocab = set()
-        for doc in train_docs:
-            vocab.update(doc)
-        vocab = list(vocab)
-
-        # Create OCTIS dataset
-        dataset = Dataset()
-
-        # Manually set the dataset attributes
-        dataset.corpus = train_docs
-        dataset.vocabulary = vocab
-        dataset._Dataset__metadata = {}
-
-        # Set partitions manually
-        n_train = len(train_docs)
-        dataset._Dataset__metadata["last-training-doc"] = n_train - 1
-        dataset._Dataset__metadata["last-validation-doc"] = n_train - 1
-
-        # Initialize ProdLDA model
-        model = ProdLDA(
-            num_topics=n_topics,
-            num_epochs=epochs,
-            learn_priors=True,
-            batch_size=64,
-            lr=0.001,
-            momentum=0.99,
-            solver='adam',
-            num_samples=20,
-            reduce_on_plateau=True,
-            num_layers=2,
-            num_neurons=100,
-            activation='softplus',
-            dropout=0.2,
-            use_partitions=True
-        )
-
-        print("Training OCTIS ProdLDA model...")
-
-        # Train the model
-        model_output = model.train_model(dataset)
-
-        # Get topic assignments for training data
-        train_topics = []
-        for doc in train_docs:
-            # Get topic distribution for document
-            doc_topic_dist = model.inference([doc])
-            # Get dominant topic
-            dominant_topic = np.argmax(doc_topic_dist[0])
-            train_topics.append(dominant_topic)
-
-        train_topics = np.array(train_topics)
-
-        # Get topic assignments for test data
-        test_topics = []
-        for doc in test_docs:
-            try:
-                doc_topic_dist = model.inference([doc])
-                dominant_topic = np.argmax(doc_topic_dist[0])
-                test_topics.append(dominant_topic)
-            except:
-                # If inference fails for a document, assign random topic
-                test_topics.append(np.random.randint(0, n_topics))
-
-        test_topics = np.array(test_topics)
-
-        # Evaluate performance
-        train_metrics = self.evaluate_topic_model(train_topics, self.labels, "Neural Topic Model (Train)")
-        test_metrics = self.evaluate_topic_model(test_topics, self.test_labels, "Neural Topic Model (Test)")
-
-        # Store results
-        self.results['Neural_TM'] = {
-            'train_metrics': train_metrics,
-            'test_metrics': test_metrics,
-            'model': model,
-            'train_topics': train_topics,
-            'test_topics': test_topics,
-            'model_output': model_output
-        }
-
-        # Display top words per topic
-        print("\nTop words per topic:")
-        try:
-            # Get topics from model output
-            topics = model_output['topics']
-            for i, topic_words in enumerate(topics):
-                # Take top 10 words for each topic
-                top_words = topic_words[:10] if len(topic_words) >= 10 else topic_words
-                print(f"Topic {i}: {', '.join(top_words)}")
-        except Exception as e:
-            print(f"Could not display topics: {e}")
-
-
-        return model, train_topics
+        self.plot_topic_sizes(model, self.elbow_k)
+        self.plot_topic_words(model, self.elbow_k, num_words=5)
+        self.plot_wordclouds(model, self.elbow_k)
+        # self.evaluate_topic_model(model.doc_top_reduced, self.labels, "TOP2VEC")
 
     def run_transformer_topic_modeling(self):
         """
-        Implement transformer-based topic modeling approaches
+        Transformer-based topic modeling approaches with different models & BERTopic
         """
-        print("\n=== Implementing Transformer-based Topic Modeling ===")
+        print("\n=== Run Transformer-based Topic Modeling (Bertopic) ===")
 
-        # This is essentially BERTopic with different configurations
         if not BERTOPIC_AVAILABLE:
             print("BERTopic not available for transformer-based approach. Skipping...")
             return None, None
 
         # Try different transformer models
         transformer_models = [
-            #'all-MiniLM-L6-v2',
+            'all-MiniLM-L12-v2',
             'all-mpnet-base-v2',
-            'distilbert-base-nli-mean-tokens'
         ]
 
         best_model = None
         best_score = -1
 
         for model_name in transformer_models:
-            try:
-                print(f"Testing {model_name}...")
-                embedding_model = SentenceTransformer(model_name)
-                # Generate embeddings for optimal k finding
-                print("Generating embeddings for optimal k calculation...")
-                embeddings = embedding_model.encode(self.processed_texts)
+            print(f"Testing {model_name}...")
+            test_nmi, topic_model, topics, test_topics = self.run_bertopic(model_name=model_name)
+            # print(test_nmi)
+            # topic_model.visualize_topics()
 
-                # Find optimal k
-                elbow_k, silhouette_k, _, _ = self.find_optimal_clusters_elbow(embeddings)
-
-                topic_model = BERTopic(
-                    nr_topics=elbow_k,
-                    embedding_model=embedding_model,
-                    verbose=False
-                )
-
-                topics, _ = topic_model.fit_transform(self.processed_texts)
-                test_topics, _ = topic_model.transform(self.test_texts)
-
-                # UMAP-Reduktion auf 2D
-                umap_model = umap.UMAP(n_neighbors=15, n_components=2, metric='cosine')
-                reduced_embeddings = umap_model.fit_transform(embeddings)
-                reduced_embeddings_embeddings_test = umap_model.transform(embedding_model.encode(self.test_texts))
-
-                fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-
-                # Plot mit echten Labels
-                axes[0].scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], c=self.labels, cmap='tab10', s=10)
-                axes[0].set_title(f"UMAP Projection (Ground Truth) - Train")
-                axes[1].scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], c=topics, cmap='tab10', s=10)
-                axes[1].set_title(f"UMAP Projection (BERTopic Topics - {model_name}) - Train")
-                plt.show()
-
-                fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-
-                # Plot mit echten Labels
-                axes[0].scatter(reduced_embeddings_embeddings_test[:, 0], reduced_embeddings_embeddings_test[:, 1],
-                                c=self.test_labels, cmap='tab10', s=10)
-                axes[0].set_title("UMAP Projection (Ground Truth) - Test")
-                axes[1].scatter(reduced_embeddings_embeddings_test[:, 0], reduced_embeddings_embeddings_test[:, 1],
-                                c=test_topics, cmap='tab10', s=10)
-                axes[1].set_title(f"UMAP Projection (BERTopic Topics {model_name}) - Test")
-                plt.show()
-
-                # Quick evaluation
-                test_nmi = normalized_mutual_info_score(self.test_labels, test_topics)
-                print(f"{model_name} Test NMI: {test_nmi:.4f}")
-
-                if test_nmi > best_score:
-                    best_score = test_nmi
-                    best_model = topic_model
-                    best_train_topics = topics
-                    best_test_topics = test_topics
-                    best_model_name = model_name
-
-            except Exception as e:
-                print(f"Error with {model_name}: {e}")
-                continue
+            if test_nmi > best_score:
+                best_score = test_nmi
+                best_model = topic_model
+                best_train_topics = topics
+                best_test_topics = test_topics
+                best_model_name = model_name
 
         if best_model is not None:
             print(f"\nBest transformer model: {best_model_name}")
-            train_metrics = self.evaluate_topic_model(best_train_topics, self.labels, f"Transformer-TM (Train)")
-            test_metrics = self.evaluate_topic_model(best_test_topics, self.test_labels, f"Transformer-TM (Test)")
+            train_metrics, _ = self.evaluate_topic_model(best_train_topics, self.labels, f"Transformer (Train)")
+            test_metrics, _ = self.evaluate_topic_model(best_test_topics, self.test_labels, f"Transformer (Test)")
 
-            self.results['Transformer_TM'] = {
+            self.results['Transformer'] = {
                 'train_metrics': train_metrics,
                 'test_metrics': test_metrics,
                 'model': best_model,
@@ -599,13 +878,13 @@ class AGNewsTopicModeling:
                 'best_model_name': best_model_name
             }
 
-        return best_model, best_train_topics
+        return
 
-    def implement_ensemble_methods(self):
+    def run_ensemble_methods(self):
         """
         Test ensemble methods combining different topic models
         """
-        print("\n=== Implementing Ensemble Methods ===")
+        print("\n=== Running Ensemble Methods ===")
 
         if len(self.results) < 2:
             print("Need at least 2 models for ensemble. Skipping...")
@@ -617,6 +896,8 @@ class AGNewsTopicModeling:
         model_names = []
 
         for model_name, result in self.results.items():
+            if model_name not in ['Top2Vec', 'Transformer']:
+                continue
             if 'train_topics' in result and 'test_topics' in result:
                 train_predictions.append(result['train_topics'])
                 test_predictions.append(result['test_topics'])
@@ -648,8 +929,8 @@ class AGNewsTopicModeling:
             test_ensemble.append(majority_vote)
 
         # Evaluate ensemble performance
-        train_metrics = self.evaluate_topic_model(train_ensemble, self.labels, "Ensemble (Train)")
-        test_metrics = self.evaluate_topic_model(test_ensemble, self.test_labels, "Ensemble (Test)")
+        train_metrics, _ = self.evaluate_topic_model(train_ensemble, self.labels, "Ensemble (Train)")
+        test_metrics, _ = self.evaluate_topic_model(test_ensemble, self.test_labels, "Ensemble (Test)")
 
         # Store results
         self.results['Ensemble'] = {
@@ -660,35 +941,21 @@ class AGNewsTopicModeling:
             'component_models': model_names
         }
 
-        return train_ensemble
+        return
 
-    def run_all(self, train_data, test_data):
+    def run_all(self):
         """
-        Run the complete topic modeling study
+        Run the complete topic modeling suite
         """
-        print("=== AG-News Topic Modeling ===\n")
-
-        # Load and preprocess data
-        self.load_and_preprocess_data(train_data, test_data)
-
-        # Run all implemented methods
-        print("\n" + "=" * 50)
-        self.run_bertopic()
-
         print("\n" + "=" * 50)
         self.run_top2vec()
-
-        # doesn't work yet, maybe just leave out, mistiges octis
-        print("\n" + "=" * 50)
-        #self.implement_neural_topic_model()
 
         print("\n" + "=" * 50)
         self.run_transformer_topic_modeling()
 
         print("\n" + "=" * 50)
-        self.implement_ensemble_methods()
+        self.run_ensemble_methods()
 
-        # Generate final comparison
         self.generate_final_comparison()
 
     def generate_final_comparison(self):
@@ -707,6 +974,8 @@ class AGNewsTopicModeling:
         comparison_data = []
 
         for model_name, result in self.results.items():
+            if model_name == 'Transformer':
+                continue
             if 'test_metrics' in result:
                 row = {'Model': model_name}
                 row.update(result['test_metrics'])
@@ -724,7 +993,7 @@ class AGNewsTopicModeling:
             print("BEST PERFORMING MODELS:")
             print("-" * 40)
 
-            metrics = ['ARI', 'NMI', 'Homogeneity', 'Completeness', 'V-Measure']
+            metrics = ['ARI', 'NMI', 'Homogeneity', 'Completeness', 'V-Measure', 'Aligned_Accuracy']
             for metric in metrics:
                 if metric in df_comparison.columns:
                     best_idx = df_comparison[metric].idxmax()
@@ -742,7 +1011,7 @@ class AGNewsTopicModeling:
         if len(df_comparison) == 0:
             return
 
-        metrics = ['ARI', 'NMI', 'Homogeneity', 'Completeness', 'V-Measure']
+        metrics = ['ARI', 'NMI', 'Homogeneity', 'Completeness', 'V-Measure', 'Aligned_Accuracy']
         available_metrics = [m for m in metrics if m in df_comparison.columns]
 
         if not available_metrics:
@@ -773,73 +1042,85 @@ class AGNewsTopicModeling:
         plt.tight_layout()
         plt.show()
 
+    def load_data(self, column='Description'):
+
+        print("Loading AG-News dataset...")
+
+        print("--- Loading and Preparing Data ---")
+
+        path = kagglehub.dataset_download("amananandrai/ag-news-classification-dataset")
+        train_df, test_df = data_processing.read_ag_news_split(path)
+        subsample = True
+        if subsample:
+            print("SUBSAMPLING")
+            train_df, _ = train_test_split(
+                train_df,
+                train_size=20000,
+                stratify=train_df['labels'],
+                random_state=42
+            )
+
+            _, test_df = train_test_split(
+                test_df,
+                train_size=3600,
+                stratify=test_df['labels'],
+                random_state=42
+            )
+
+        print(train_df.shape)
+        processing_cols = ['Title', 'Description']
+
+        # clean text columns - try to remove html stuff
+        train_df["Title"] = train_df["Title"].apply(
+            lambda t: data_processing.clean_given_text(t) if pd.notnull(t) else t)
+        train_df["Description"] = train_df["Description"].apply(
+            lambda d: data_processing.clean_given_text(d) if pd.notnull(d) else d)
+        test_df["Title"] = test_df["Title"].apply(lambda t: data_processing.clean_given_text(t) if pd.notnull(t) else t)
+        test_df["Description"] = test_df["Description"].apply(
+            lambda d: data_processing.clean_given_text(d) if pd.notnull(d) else d)
+
+        # more removal of unnecessary noise
+        data_processing.remove_quot_occurences(train_df, processing_cols)
+        data_processing.remove_quot_occurences(test_df, processing_cols)
+        data_processing.replace_numeric_entities(train_df, processing_cols)
+        data_processing.replace_numeric_entities(test_df, processing_cols)
+        data_processing.remove_character_references(train_df, processing_cols)
+        data_processing.remove_character_references(test_df, processing_cols)
+
+        train_df['Combined'] = train_df['Title'] + ' ' + train_df['Description']
+        test_df['Combined'] = test_df['Title'] + ' ' + test_df['Description']
+
+        print(f"Training data shape: {train_df.shape}")
+        print("training data cols: ", train_df.columns)
+        print(f"Test data shape: {test_df.shape}")
+        print("testing data cols: ", test_df.columns)
+        print(f"Label distribution in training: {train_df['labels'].value_counts().to_dict()}")
+
+        self.column = column
+        self.load_and_preprocess_data(train_df, test_df, text_column=column)
+
+        return train_df, test_df
+
+
 def main():
     """
     Main function to run the comprehensive topic modeling study
     """
-    print("AG-News Topic Modeling Study")
+    print("AG-News Topic Modeling")
     print("=" * 50)
 
-    # Initialize the study
-    study = AGNewsTopicModeling()
-
-    # Load data (replace with actual AG-News data loading)
-    print("Loading AG-News dataset...")
-
-    print("--- Loading and Preparing Data ---")
-
-    path = kagglehub.dataset_download("amananandrai/ag-news-classification-dataset")
-    train_df, test_df = data_processing.read_ag_news_split(path)
-    subsample = True
-    if subsample:
-        print("SUBSAMPLING")
-        train_df_subset, _ = train_test_split(
-            train_df,
-            train_size=12000,
-            stratify=train_df['labels'],
-            random_state=42
-        )
-
-        train_df, test_df = train_test_split(
-            train_df_subset,
-            train_size=10000,
-            stratify=train_df_subset['labels'],
-            random_state=42
-        )
-
-    print(train_df.shape)
-    processing_cols = ['Title', 'Description']
-
-    # clean text columns - try to remove html stuff
-    train_df["Title"] = train_df["Title"].apply(lambda t: data_processing.clean_given_text(t) if pd.notnull(t) else t)
-    train_df["Description"] = train_df["Description"].apply(lambda d: data_processing.clean_given_text(d) if pd.notnull(d) else d)
-    test_df["Title"] = test_df["Title"].apply(lambda t: data_processing.clean_given_text(t) if pd.notnull(t) else t)
-    test_df["Description"] = test_df["Description"].apply(lambda d: data_processing.clean_given_text(d) if pd.notnull(d) else d)
-
-    # more removal of unnecessary noise
-    data_processing.remove_quot_occurences(train_df, processing_cols)
-    data_processing.remove_quot_occurences(test_df, processing_cols)
-    data_processing.replace_numeric_entities(train_df, processing_cols)
-    data_processing.replace_numeric_entities(test_df, processing_cols)
-    data_processing.remove_character_references(train_df, processing_cols)
-    data_processing.remove_character_references(test_df, processing_cols)
-
-    train_df['Combined'] = train_df['Title'] + ' ' + train_df['Description']
-    test_df['Combined'] = test_df['Title'] + ' ' + test_df['Description']
-
-    print(f"Training data shape: {train_df.shape}")
-    print(f"Test data shape: {test_df.shape}")
-    print(f"Label distribution in training: {train_df['labels'].value_counts().to_dict()}")
+    tm = AGNewsTopicModeling()
+    tm.load_data()
 
     # Run all
-    study.run_all(train_df, test_df)
+    tm.run_all()
 
     print("\n" + "=" * 60)
     print("RUN ALL COMPLETED SUCCESSFULLY!")
     print("=" * 60)
 
-    return study
+    return tm
+
 
 if __name__ == "__main__":
-    # Run the main study
     main()
