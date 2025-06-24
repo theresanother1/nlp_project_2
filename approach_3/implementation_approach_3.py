@@ -1040,9 +1040,10 @@ class AGNewsTopicModeling:
                         f'{height:.3f}', ha='center', va='bottom')
 
         plt.tight_layout()
+        plt.savefig(f"general_comparison_{self.column}.png")
         plt.show()
 
-    def load_data(self, column='Description'):
+    def load_data(self, column='Combined'):
 
         print("Loading AG-News dataset...")
 
