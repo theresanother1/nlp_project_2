@@ -10,6 +10,7 @@ from typing import List, Dict
 def plot_final_results(df: pd.DataFrame):
     """Plot a bar chart comparison of all models across all key metrics."""
     if df.empty:
+        print("No results to plot.")
         return
     
     metrics = [col for col in df.columns if col != 'Model']
