@@ -127,8 +127,16 @@ class AGNewsTopicModeling:
         print("test df ", test_data.shape)
 
         # make labels fit to standard conventions starting with 0 (for bertopic etc easier)
-        train_data[label_column] = train_data[label_column].apply(lambda x: x - 1)
-        test_data[label_column] = test_data[label_column].apply(lambda x: x - 1)
+        train_data[label_column] = pd.to_numeric(train_data[label_column], errors='coerce')
+        test_data[label_column] = pd.to_numeric(test_data[label_column], errors='coerce')
+        
+        # Drop rows with NaN labels that might result from coercion
+        train_data.dropna(subset=[label_column], inplace=True)
+        test_data.dropna(subset=[label_column], inplace=True)
+
+        # Convert to integer and subtract 1
+        train_data[label_column] = train_data[label_column].astype(int).apply(lambda x: x - 1)
+        test_data[label_column] = test_data[label_column].astype(int).apply(lambda x: x - 1)
 
         print("LABELS are:")
         print(set(train_data[label_column].tolist()))
@@ -154,7 +162,8 @@ class AGNewsTopicModeling:
         # Generate embeddings for optimal k finding
         print("Generating embeddings for optimal k calculation...")
         embeddings = embedding_model.encode(self.processed_texts)
-        self.elbow_k, silhouette_k, _, _ = self.find_optimal_clusters_elbow(embeddings)
+        #self.elbow_k, silhouette_k, _, _ = self.find_optimal_clusters_elbow(embeddings)
+        self.elbow_k = 4  # Set to 4 as per the problem statement
         print(f"Loaded {len(self.processed_texts)} training texts and {len(self.test_texts)} test texts")
         print(f"Categories distribution: {Counter(self.labels)}")
 
