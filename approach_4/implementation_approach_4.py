@@ -23,8 +23,8 @@ def run_evaluation():
     
     # --- 1. Load and Preprocess Data ---
     print("--- 1. Loading and Preprocessing Data ---")
-    train_df = pd.read_csv('../data/train_cleaned.csv')
-    test_df = pd.read_csv('../data/test_cleaned.csv')
+    train_df = pd.read_csv('data/train_cleaned.csv')
+    test_df = pd.read_csv('data/test_cleaned.csv')
     
     train_df['Combined'] = train_df['Title'] + ' ' + train_df['Description']
     test_df['Combined'] = test_df['Title'] + ' ' + test_df['Description']
@@ -129,6 +129,10 @@ def run_evaluation():
         model = AGNewsTopicModeling()
         
         # Workaround for hardcoded 'labels' column in 3_approach
+        train_df = pd.read_csv('data/train_cleaned.csv')
+        test_df = pd.read_csv('data/test_cleaned.csv')
+        train_df['Combined'] = train_df['Title'] + ' ' + train_df['Description']
+        test_df['Combined'] = test_df['Title'] + ' ' + test_df['Description']
         train_df_local = train_df.rename(columns={'Class Index': 'labels'})
         test_df_local = test_df.rename(columns={'Class Index': 'labels'})
         

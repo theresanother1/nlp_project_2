@@ -152,7 +152,7 @@ class AGNewsTopicModeling:
         test_texts = test_data[text_column].tolist()
         self.test_labels = test_data[label_column].tolist()
         processed_test_texts = self._preprocess_text(test_texts)
-        print([text for text in processed_texts])
+        #print([text for text in processed_texts])
         #print(test_texts)
 
         self.processed_texts = processed_texts
