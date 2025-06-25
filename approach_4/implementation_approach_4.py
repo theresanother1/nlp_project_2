@@ -20,10 +20,11 @@ def run_evaluation():
     """
     Run the full evaluation pipeline.
     """
+    
     # --- 1. Load and Preprocess Data ---
     print("--- 1. Loading and Preprocessing Data ---")
-    train_df = pd.read_csv('data/train_cleaned.csv')
-    test_df = pd.read_csv('data/test_cleaned.csv')
+    train_df = pd.read_csv('../data/train_cleaned.csv')
+    test_df = pd.read_csv('../data/test_cleaned.csv')
     
     train_df['Combined'] = train_df['Title'] + ' ' + train_df['Description']
     test_df['Combined'] = test_df['Title'] + ' ' + test_df['Description']
@@ -32,7 +33,7 @@ def run_evaluation():
     dictionary = Dictionary(train_texts)
     
     results = []
-
+   
     # --- 2. Evaluate Approach 1: LDA ---
     print("\n--- 2. Evaluating Approach 1: LDA ---")
     def train_lda():
@@ -76,7 +77,7 @@ def run_evaluation():
             'Runtime (s)': lda_benchmark['runtime'],
             'Memory (MB)': lda_benchmark['memory_usage_mb']
         })
-
+    
     # --- 3. Evaluate Approach 2: NMF, LSA, PCA ---
     print("\n--- 3. Evaluating Approach 2: NMF, LSA, PCA ---")
     runner = ExperimentRunner(train_df, test_df)
@@ -121,25 +122,33 @@ def run_evaluation():
         'Runtime (s)': None,
         'Memory (MB)': None
     })
-
-
+   
     # --- 4. Evaluate Approach 3: BERTopic ---
     print("\n--- 4. Evaluating Approach 3: BERTopic ---")
     def train_bertopic():
         model = AGNewsTopicModeling()
         
         # Workaround for hardcoded 'labels' column in 3_approach
-        train_df_bertopic = train_df.rename(columns={'Class Index': 'labels'})
+        train_df_local = train_df.rename(columns={'Class Index': 'labels'})
+        test_df_local = test_df.rename(columns={'Class Index': 'labels'})
         
         # Create a small test set for BERTopic
         from sklearn.model_selection import train_test_split
-        train_df_bertopic, test_df_bertopic = train_test_split(
-            train_df_bertopic, 
-            test_size=0.1, 
-            random_state=42, 
-            stratify=train_df_bertopic['labels']
-        )
         
+        train_df_bertopic, _ = train_test_split(
+            train_df_local,
+            train_size=20000,
+            stratify=train_df_local['labels'],
+            random_state=42
+        )
+
+        _, test_df_bertopic = train_test_split(
+            test_df_local,
+            train_size=3600,
+            stratify=test_df_local['labels'],
+            random_state=42
+        )
+    
         # Map string labels to numeric indices
         label_map = {v: k for k, v in AG_LABELS.items()}
         train_df_bertopic['labels'] = train_df_bertopic['labels'].map(label_map)

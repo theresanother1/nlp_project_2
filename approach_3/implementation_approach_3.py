@@ -75,6 +75,7 @@ class AGNewsTopicModeling:
         self.test_texts = []
         self.test_labels = []
         self.results = {}
+        self.column = "Combined"
 
         # AG-News categories starting with 0
         self.category_names = {0: 'World', 1: 'Sports', 2: 'Business', 3: 'Sci/Tech'}
@@ -116,12 +117,14 @@ class AGNewsTopicModeling:
             processed_texts.append(clean_text)
         return processed_texts
 
-    def load_and_preprocess_data(self, train_data, test_data, text_column='Description', label_column='labels'):
+    def load_and_preprocess_data(self, train_data, test_data, text_column='Combined', label_column='labels'):
         """
         Load and preprocess AG-News data with given preprocessing pipeline
         """
         print("Loading and preprocessing AG-News data...")
         # Extract texts and labels
+        if not self.column: 
+            self.column = text_column
 
         print("train df ", train_data.shape)
         print("test df ", test_data.shape)
@@ -149,6 +152,8 @@ class AGNewsTopicModeling:
         test_texts = test_data[text_column].tolist()
         self.test_labels = test_data[label_column].tolist()
         processed_test_texts = self._preprocess_text(test_texts)
+        print([text for text in processed_texts])
+        #print(test_texts)
 
         self.processed_texts = processed_texts
         self.test_texts = processed_test_texts
